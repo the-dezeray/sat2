@@ -5,7 +5,7 @@ import { SatelliteManager } from './SatelliteManager.js';
 import './style.css';
 
 // Global State
-let TIME_SCALE = 60;
+let TIME_SCALE = 1;
 let currentTime = new Date();
 let isPaused = false;
 let orbitVisible = false;
@@ -32,13 +32,23 @@ infoBox.id = 'sat-info';
 infoBox.className = 'glass';
 document.body.appendChild(infoBox);
 
+// Hover label (satellite name)
+const hoverLabel = document.createElement('div');
+hoverLabel.id = 'sat-hover-label';
+hoverLabel.className = 'glass';
+hoverLabel.style.display = 'none';
+document.body.appendChild(hoverLabel);
+
 // Zoom Controls - Middle Left
 const zoomControls = document.createElement('div');
 zoomControls.id = 'zoom-controls';
 zoomControls.className = 'glass';
 zoomControls.innerHTML = `
-  <button id="zoom-in-btn" title="Zoom In">+</button>
-  <button id="zoom-out-btn" title="Zoom Out">-</button>
+  <div class="control-item">
+    <span class="control-label-text">Zoom</span>
+    <input type="range" id="zoom-slider" min="0" max="100" value="63" step="1">
+    <span class="value-badge" id="zoom-value">63</span>
+  </div>
 `;
 document.body.appendChild(zoomControls);
 
@@ -67,6 +77,17 @@ viewModeSelector.innerHTML = `
 `;
 document.body.appendChild(viewModeSelector);
 
+// Orbit Legend - Bottom Left
+const orbitLegend = document.createElement('div');
+orbitLegend.id = 'orbit-legend';
+orbitLegend.className = 'glass';
+orbitLegend.innerHTML = `
+  <div class="legend-item"><span class="dot leo"></span> LEO (Low)</div>
+  <div class="legend-item"><span class="dot meo"></span> MEO (Mid)</div>
+  <div class="legend-item"><span class="dot heo"></span> HEO (High)</div>
+`;
+document.body.appendChild(orbitLegend);
+
 // Main Controls Panel - Bottom Right
 const controlsPanel = document.createElement('div');
 controlsPanel.id = 'controls';
@@ -74,8 +95,8 @@ controlsPanel.className = 'glass';
 controlsPanel.innerHTML = `
   <div class="control-item">
     <span class="control-label-text">Scale</span>
-    <input type="range" id="speed-slider" min="1" max="500" value="60" step="1">
-    <span class="value-badge" id="speed-value">60</span>
+    <input type="range" id="speed-slider" min="1" max="500" value="1" step="1">
+    <span class="value-badge" id="speed-value">1</span>
   </div>
 
   <div class="selector-group" id="mesh-selector">
@@ -281,8 +302,6 @@ function drawDownwardLine(satPos) {
 
   timeLogger.innerText = `UTC ${currentTime.toISOString().replace('T', ' ').slice(0, 19)} | GLOBAL SURVEILLANCE ACTIVE`;
 
-  // Add slow Earth rotation for scale perception
-  Globe.rotation.y += 0.0002;
 
   tbControls.update();
   renderer.render(scene, camera);
@@ -293,6 +312,7 @@ window.addEventListener('mousemove', (event) => {
   if (event.target.closest('.glass') || event.target.closest('.search-container')) {
     satelliteManager.setHovered(-1);
     document.body.classList.remove('hovering-satellite');
+    hoverLabel.style.display = 'none';
     return;
   }
 
@@ -306,9 +326,25 @@ window.addEventListener('mousemove', (event) => {
   
   if (hoveredIndex >= 0) {
     document.body.classList.add('hovering-satellite');
+
+    const hoveredSat = satelliteManager.getSatelliteData(hoveredIndex);
+    if (hoveredSat) {
+      hoverLabel.textContent = hoveredSat[1];
+      hoverLabel.style.display = 'block';
+      hoverLabel.style.transform = `translate(${event.clientX + 12}px, ${event.clientY + 12}px)`;
+    } else {
+      hoverLabel.style.display = 'none';
+    }
   } else {
     document.body.classList.remove('hovering-satellite');
+    hoverLabel.style.display = 'none';
   }
+});
+
+window.addEventListener('mouseleave', () => {
+  satelliteManager.setHovered(-1);
+  document.body.classList.remove('hovering-satellite');
+  hoverLabel.style.display = 'none';
 });
 
 // Interaction - Click to select satellite
@@ -358,16 +394,14 @@ document.getElementById('camera-selector').addEventListener('click', (e) => {
 });
 
 // Zoom Controls Listeners
-document.getElementById('zoom-in-btn').addEventListener('click', () => {
-  const currentDist = camera.position.length();
-  const newDist = Math.max(105, currentDist * 0.8);
+document.getElementById('zoom-slider').addEventListener('input', (e) => {
+  const value = parseInt(e.target.value);
+  const minDist = 105;
+  const maxDist = 2000;
+  // Inverted logic: Higher value (Top) = Closer (Zoom In)
+  const newDist = maxDist - (maxDist - minDist) * (value / 100);
   camera.position.normalize().multiplyScalar(newDist);
-});
-
-document.getElementById('zoom-out-btn').addEventListener('click', () => {
-  const currentDist = camera.position.length();
-  const newDist = Math.min(2000, currentDist * 1.2);
-  camera.position.normalize().multiplyScalar(newDist);
+  document.getElementById('zoom-value').textContent = value;
 });
 
 // Mesh Selector Listener
@@ -483,7 +517,18 @@ searchResults.addEventListener('click', async (e) => {
 // Helper to select satellite
 async function selectSatellite(index) {
   if (index >= 0) {
+    const prevSelected = satelliteManager.getSelected();
+
+    // Toggle orbit off if clicking the same selected satellite again
+    if (prevSelected === index && orbitVisible) {
+      orbitVisible = false;
+      const orbitLine = Globe.getObjectByName('orbitLine');
+      if (orbitLine) Globe.remove(orbitLine);
+      return;
+    }
+
     satelliteManager.setSelected(index);
+    orbitVisible = true;
     
     // Get satellite data
     const satData = satelliteManager.getSatelliteData(index);
@@ -497,6 +542,7 @@ async function selectSatellite(index) {
         drawOrbitPath(orbitPoints, true);
       } catch (err) {
         console.error('Failed to calculate orbit:', err);
+        orbitVisible = false;
       }
     }
     

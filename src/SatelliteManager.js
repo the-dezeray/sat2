@@ -35,6 +35,25 @@ export class SatelliteManager {
             
             const material = new THREE.MeshBasicMaterial({ color: 0xffffff }); // White for max visibility
             this.mesh = new THREE.InstancedMesh(geometry, material, this.count);
+
+            // Set colors based on orbit
+            const color = new THREE.Color();
+            for (let i = 0; i < this.count; i++) {
+                const item = this.satelliteData[i];
+                // item format: [id, name, epoch_unix, incl, raan, ecc, argp, ma, mm, bstar]
+                const mm = item[8]; // Mean Motion
+                
+                if (mm >= 11.25) {
+                    color.setHex(0xffffff); // LEO - Green
+                } else if (mm > 1.0027) {
+                    color.setHex(0xffff00); // MEO - Yellow
+                } else {
+                    color.setHex(0xff0000); // HEO - Red
+                }
+                this.mesh.setColorAt(i, color);
+            }
+            this.mesh.instanceColor.needsUpdate = true;
+
             this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
             this.mesh.frustumCulled = false; // Prevent culling issues
             this.globe.add(this.mesh);
@@ -190,6 +209,10 @@ export class SatelliteManager {
         return this.selectedIndex;
     }
 
+    getHovered() {
+        return this.hoveredIndex;
+    }
+
     getSatelliteData(index) {
         if (index >= 0 && index < this.satelliteData.length) {
             return this.satelliteData[index];
@@ -285,29 +308,9 @@ export class SatelliteManager {
 
     async calculateOrbitPath(satData, globe, currentTime, numPoints = 100) {
         const points = [];
-        
-        // satellite data format: [id, name, epoch, i, o, e, p, m, n, b]
-        const epoch = satData[2];
-        const inclination = satData[3];
-        const raan = satData[4];
-        const eccentricity = satData[5];
-        const argOfPerigee = satData[6];
-        const meanAnomaly = satData[7];
+
+        const satrec = this.createSatRecFromData(satData);
         const meanMotion = satData[8];
-        const bstar = satData[9];
-        
-        // Create satrec from orbital elements
-        const satrec = {
-            no: meanMotion * (2 * Math.PI / 1440),
-            inclo: inclination * (Math.PI / 180),
-            nodeo: raan * (Math.PI / 180),
-            ecco: eccentricity,
-            argpo: argOfPerigee * (Math.PI / 180),
-            mo: meanAnomaly * (Math.PI / 180),
-            bstar: bstar,
-            epochyr: new Date(epoch * 1000).getUTCFullYear() % 100,
-            epochdays: this.getDayOfYear(new Date(epoch * 1000))
-        };
         
         const periodMinutes = 1440 / meanMotion;
         const periodMs = periodMinutes * 60 * 1000;
@@ -338,5 +341,43 @@ export class SatelliteManager {
         const diff = date - start;
         const oneDay = 1000 * 60 * 60 * 24;
         return Math.floor(diff / oneDay);
+    }
+
+    createSatRecFromData(data) {
+        // data: [id, name, epoch_unix, incl, raan, ecc, argp, ma, mm, bstar]
+        const [id, _name, epochUnix, incl, raan, ecc, argp, ma, mm, _bstar] = data;
+
+        const f = (n, w, d) => Number(n).toFixed(d).padStart(w, ' ');
+        const i = (n, w) => String(Math.trunc(Number(n))).padStart(w, '0');
+
+        const date = new Date(epochUnix * 1000);
+        const yearFull = date.getUTCFullYear();
+        const year = yearFull % 100;
+        const startOfYear = new Date(Date.UTC(yearFull, 0, 0));
+        const diff = date - startOfYear;
+        const oneDay = 1000 * 60 * 60 * 24;
+        const dayOfYear = diff / oneDay;
+
+        // Keep BSTAR as 0 for stability (matches worker.js)
+        const bstarStr = '00000-0';
+
+        const line1Body = `1 ${i(id, 5)}U 00000A   ${i(year, 2)}${f(dayOfYear, 12, 8)}  .00000000  00000-0  ${bstarStr} 0  999`;
+        const line1 = line1Body + this.computeChecksum(line1Body);
+
+        const eccStr = f(ecc, 9, 7).replace('0.', '').substring(0, 7);
+        const line2Body = `2 ${i(id, 5)} ${f(incl, 8, 4)} ${f(raan, 8, 4)} ${eccStr} ${f(argp, 8, 4)} ${f(ma, 8, 4)} ${f(mm, 11, 8)}00001`;
+        const line2 = line2Body + this.computeChecksum(line2Body);
+
+        return satellite.twoline2satrec(line1, line2);
+    }
+
+    computeChecksum(line) {
+        let sum = 0;
+        for (let idx = 0; idx < line.length; idx++) {
+            const char = line[idx];
+            if (char >= '0' && char <= '9') sum += parseInt(char, 10);
+            else if (char === '-') sum += 1;
+        }
+        return sum % 10;
     }
 }
