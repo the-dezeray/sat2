@@ -2,117 +2,23 @@ import * as THREE from 'three';
 import ThreeGlobe from 'three-globe';
 import { TrackballControls } from 'three/examples/jsm/controls/TrackballControls.js';
 import { SatelliteManager } from './SatelliteManager.js';
+import { state, updateState } from './state.js';
+import { createUI, updateInfoBox } from './ui.js';
 import './style.css';
 
-// Global State
-let TIME_SCALE = 1;
-let currentTime = new Date();
-let isPaused = false;
-let orbitVisible = false;
-let cameraMode = 'FREE'; // FREE, FOLLOW, NADIR
-
 // UI Elements
-const timeLogger = document.createElement('div');
-timeLogger.id = 'time-log';
-document.body.appendChild(timeLogger);
-
-// Search Bar
-const searchContainer = document.createElement('div');
-searchContainer.className = 'search-container glass';
-searchContainer.innerHTML = `
-  <span class="search-icon">🔍</span>
-  <input type="text" id="sat-search" placeholder="Search by NORAD ID or Name...">
-  <div class="loader" id="search-loader"></div>
-  <div class="search-results" id="search-results"></div>
-`;
-document.body.appendChild(searchContainer);
-
-const infoBox = document.createElement('div');
-infoBox.id = 'sat-info';
-infoBox.className = 'glass';
-document.body.appendChild(infoBox);
-
-// Hover label (satellite name)
-const hoverLabel = document.createElement('div');
-hoverLabel.id = 'sat-hover-label';
-hoverLabel.className = 'glass';
-hoverLabel.style.display = 'none';
-document.body.appendChild(hoverLabel);
-
-// Zoom Controls - Middle Left
-const zoomControls = document.createElement('div');
-zoomControls.id = 'zoom-controls';
-zoomControls.className = 'glass';
-zoomControls.innerHTML = `
-  <div class="control-item">
-    <span class="control-label-text">Zoom</span>
-    <input type="range" id="zoom-slider" min="0" max="100" value="63" step="1">
-    <span class="value-badge" id="zoom-value">63</span>
-  </div>
-`;
-document.body.appendChild(zoomControls);
-
-// Action Buttons - Top Right
-const actionButtons = document.createElement('div');
-actionButtons.id = 'action-buttons';
-actionButtons.className = 'glass';
-actionButtons.innerHTML = `
-  <button id="track-single-btn" title="Track Satellite">🎯</button>
-  <button id="pause-btn" title="Play/Pause">
-    <span id="pause-icon">⏸</span>
-  </button>
-  <button id="reset-btn" title="Reset Time">↻</button>
-`;
-document.body.appendChild(actionButtons);
-
-// View Mode Selector - Top Right (below action buttons)
-const viewModeSelector = document.createElement('div');
-viewModeSelector.id = 'view-mode';
-viewModeSelector.className = 'glass';
-viewModeSelector.innerHTML = `
-  <div class="selector-group">
-    <div class="selector-option active" data-view="earth">🌍 Earth</div>
-    <div class="selector-option" data-view="satellite">🛰️ Satellite</div>
-  </div>
-`;
-document.body.appendChild(viewModeSelector);
-
-// Orbit Legend - Bottom Left
-const orbitLegend = document.createElement('div');
-orbitLegend.id = 'orbit-legend';
-orbitLegend.className = 'glass';
-orbitLegend.innerHTML = `
-  <div class="legend-item"><span class="dot leo"></span> LEO (Low)</div>
-  <div class="legend-item"><span class="dot meo"></span> MEO (Mid)</div>
-  <div class="legend-item"><span class="dot heo"></span> HEO (High)</div>
-`;
-document.body.appendChild(orbitLegend);
-
-// Main Controls Panel - Bottom Right
-const controlsPanel = document.createElement('div');
-controlsPanel.id = 'controls';
-controlsPanel.className = 'glass';
-controlsPanel.innerHTML = `
-  <div class="control-item">
-    <span class="control-label-text">Scale</span>
-    <input type="range" id="speed-slider" min="1" max="500" value="1" step="1">
-    <span class="value-badge" id="speed-value">1</span>
-  </div>
-
-  <div class="selector-group" id="mesh-selector">
-    <div class="selector-option active" data-mesh="marble">Marble</div>
-    <div class="selector-option" data-mesh="night">Night</div>
-    <div class="selector-option" data-mesh="dark">Dark</div>
-    <div class="selector-option" data-mesh="gray">Topo</div>
-  </div>
-
-  <div class="selector-group" id="camera-selector">
-    <div class="selector-option active" data-mode="FREE">Free</div>
-    <div class="selector-option" data-mode="FOLLOW">Follow</div>
-    <div class="selector-option" data-mode="NADIR">Nadir</div>
-  </div>
-`;
-document.body.appendChild(controlsPanel);
+const UI = createUI();
+const {
+  timeLogger,
+  searchContainer,
+  infoBox,
+  hoverLabel,
+  zoomControls,
+  actionButtons,
+  viewModeSelector,
+  orbitLegend,
+  controlsPanel
+} = UI;
 
 const Globe = new ThreeGlobe()
   .globeImageUrl('//cdn.jsdelivr.net/npm/three-globe/example/img/earth-blue-marble.jpg')
@@ -122,6 +28,15 @@ const Globe = new ThreeGlobe()
 
 const satelliteManager = new SatelliteManager(Globe);
 satelliteManager.init();
+
+// Hide loading overlay when ready
+satelliteManager.onReadyCallback = () => {
+  const overlay = document.getElementById('loading-overlay');
+  if (overlay) {
+    overlay.classList.add('hidden');
+    setTimeout(() => overlay.remove(), 500);
+  }
+};
 
 // Scene Setup
 const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -163,84 +78,15 @@ function drawOrbitPath(points, isSelected = false) {
   Globe.add(line);
 }
 
-function updateSelectedSatelliteInfo(satData) {
-  if (!satData) {
-    infoBox.style.display = 'none';
-    return;
-  }
-  
-  // Index mapping: [id, name, epoch, i, o, e, p, m, n, b]
-  const id = satData[0];
-  const name = satData[1];
-  const epoch = satData[2];
-  const inclination = satData[3];
-  const raan = satData[4];
-  const eccentricity = satData[5];
-  const argOfPerigee = satData[6];
-  const meanAnomaly = satData[7];
-  const meanMotion = satData[8];
-  const bstar = satData[9];
-  
-  infoBox.style.display = 'block';
-  infoBox.innerHTML = `
-    <div class="info-header">
-      <div class="status-dot"></div>
-      Satellite Telemetry
-    </div>
-    <div class="info-grid">
-      <div class="info-field">
-        <span class="field-label">NORAD ID</span>
-        <span class="field-value">${id}</span>
-      </div>
-      <div class="info-field">
-        <span class="field-label">Name</span>
-        <span class="field-value">${name}</span>
-      </div>
-      <div class="info-field">
-        <span class="field-label">Inclination</span>
-        <span class="field-value">${inclination.toFixed(2)}°</span>
-      </div>
-      <div class="info-field">
-        <span class="field-label">RAAN</span>
-        <span class="field-value">${raan.toFixed(2)}°</span>
-      </div>
-      <div class="info-field">
-        <span class="field-label">Eccentricity</span>
-        <span class="field-value">${eccentricity.toFixed(6)}</span>
-      </div>
-      <div class="info-field">
-        <span class="field-label">Arg Perigee</span>
-        <span class="field-value">${argOfPerigee.toFixed(2)}°</span>
-      </div>
-      <div class="info-field">
-        <span class="field-label">Mean Anomaly</span>
-        <span class="field-value">${meanAnomaly.toFixed(2)}°</span>
-      </div>
-      <div class="info-field">
-        <span class="field-label">Mean Motion</span>
-        <span class="field-value">${meanMotion.toFixed(6)}</span>
-      </div>
-      <div class="info-field">
-        <span class="field-label">BSTAR</span>
-        <span class="field-value">${bstar.toExponential(4)}</span>
-      </div>
-      <div class="info-field">
-        <span class="field-label">Epoch</span>
-        <span class="field-value">${new Date(epoch * 1000).toISOString().slice(0, 10)}</span>
-      </div>
-    </div>
-  `;
-}
-
 function drawDownwardLine(satPos) {
   const oldLine = Globe.getObjectByName('downwardLine');
   if (oldLine) Globe.remove(oldLine);
-  
+
   if (!satPos) return;
-  
+
   // Calculate the point on Earth's surface directly below the satellite
   const earthSurfacePoint = satPos.clone().normalize().multiplyScalar(100);
-  
+
   const points = [satPos.clone(), earthSurfacePoint];
   const geometry = new THREE.BufferGeometry().setFromPoints(points);
   const material = new THREE.LineBasicMaterial({
@@ -258,52 +104,67 @@ function drawDownwardLine(satPos) {
 (function animate() {
   requestAnimationFrame(animate);
 
-  if (!isPaused) {
-    currentTime = new Date(currentTime.getTime() + (1000 / 60) * TIME_SCALE);
+  if (!state.isPaused) {
+    state.currentTime = new Date(state.currentTime.getTime() + (1000 / 60) * state.timeScale);
   }
 
-  satelliteManager.update(currentTime);
+  satelliteManager.update(state.currentTime);
   satelliteManager.updateSatelliteScale(camera);
-  
+
   // Update selected satellite telemetry and draw downward line
   const selectedIndex = satelliteManager.getSelected();
   if (selectedIndex >= 0) {
-    const satData = satelliteManager.getSatelliteData(selectedIndex);
-    if (satData) {
-      updateSelectedSatelliteInfo(satData);
+    const now = performance.now();
+    // Throttle UI updates to 10Hz (every 100ms)
+    if (now - state.lastInfoUpdate > 100) {
+      const satData = satelliteManager.getSatelliteData(selectedIndex);
+      if (satData) {
+        const liveData = satelliteManager.getLiveStats(selectedIndex);
+        updateInfoBox(infoBox, satData, liveData);
+      }
+      timeLogger.innerText = `UTC ${state.currentTime.toISOString().replace('T', ' ').slice(0, 19)} | GLOBAL SURVEILLANCE ACTIVE`;
+      state.lastInfoUpdate = now;
     }
-    
+
     // Draw downward line
     const satPos = satelliteManager.getSelectedPosition();
     if (satPos) {
-        drawDownwardLine(satPos);
-        
-        // Camera Modes Logic
-        if (cameraMode !== 'FREE') {
-            const globalPos = satPos.clone();
-            globalPos.applyMatrix4(Globe.matrixWorld);
+      drawDownwardLine(satPos);
 
-            if (cameraMode === 'FOLLOW') {
-                const offset = camera.position.clone().sub(tbControls.target);
-                tbControls.target.copy(globalPos);
-                camera.position.copy(globalPos.clone().add(offset));
-            } else if (cameraMode === 'NADIR') {
-                const nadirPos = globalPos.clone().normalize().multiplyScalar(globalPos.length() + 50);
-                camera.position.lerp(nadirPos, 0.1);
-                tbControls.target.lerp(globalPos, 0.1);
-            }
+      // Camera Modes Logic
+      if (state.cameraMode !== 'FREE') {
+        const globalPos = satPos.clone();
+        globalPos.applyMatrix4(Globe.matrixWorld);
+
+        if (state.cameraMode === 'FOLLOW') {
+          const offset = camera.position.clone().sub(tbControls.target);
+          tbControls.target.copy(globalPos);
+          camera.position.copy(globalPos.clone().add(offset));
+        } else if (state.cameraMode === 'NADIR') {
+          const nadirPos = globalPos.clone().normalize().multiplyScalar(globalPos.length() + 50);
+          camera.position.lerp(nadirPos, 0.1);
+          tbControls.target.lerp(globalPos, 0.1);
         }
+      }
     }
   } else {
     const oldLine = Globe.getObjectByName('downwardLine');
     if (oldLine) Globe.remove(oldLine);
     infoBox.style.display = 'none';
+    
+    // Still update time logger even if no satellite is selected
+    const now = performance.now();
+    if (now - state.lastInfoUpdate > 100) {
+      timeLogger.innerText = `UTC ${state.currentTime.toISOString().replace('T', ' ').slice(0, 19)} | GLOBAL SURVEILLANCE ACTIVE`;
+      state.lastInfoUpdate = now;
+    }
   }
 
-  timeLogger.innerText = `UTC ${currentTime.toISOString().replace('T', ' ').slice(0, 19)} | GLOBAL SURVEILLANCE ACTIVE`;
-
-
   tbControls.update();
+
+  // Make sunlight follow camera slightly to ensure view is always lit
+  sunLight.position.copy(camera.position).add(new THREE.Vector3(100, 100, 100));
+
   renderer.render(scene, camera);
 })();
 
@@ -323,15 +184,26 @@ window.addEventListener('mousemove', (event) => {
 
   const hoveredIndex = satelliteManager.checkHover(mouse, camera);
   satelliteManager.setHovered(hoveredIndex);
-  
+
   if (hoveredIndex >= 0) {
     document.body.classList.add('hovering-satellite');
 
     const hoveredSat = satelliteManager.getSatelliteData(hoveredIndex);
-    if (hoveredSat) {
-      hoverLabel.textContent = hoveredSat[1];
-      hoverLabel.style.display = 'block';
-      hoverLabel.style.transform = `translate(${event.clientX + 12}px, ${event.clientY + 12}px)`;
+    const hoveredPos = satelliteManager.getPosition(hoveredIndex);
+    if (hoveredSat && hoveredPos) {
+      // Anchor hover label to the hovered satellite's screen projection
+      const worldPos = hoveredPos.clone().applyMatrix4(Globe.matrixWorld);
+      const projected = worldPos.clone().project(camera);
+
+      if (projected.z > -1 && projected.z < 1) {
+        const screenX = (projected.x * 0.5 + 0.5) * window.innerWidth;
+        const screenY = (-projected.y * 0.5 + 0.5) * window.innerHeight;
+        hoverLabel.textContent = hoveredSat[1];
+        hoverLabel.style.display = 'block';
+        hoverLabel.style.transform = `translate(${screenX + 12}px, ${screenY + 12}px)`;
+      } else {
+        hoverLabel.style.display = 'none';
+      }
     } else {
       hoverLabel.style.display = 'none';
     }
@@ -366,27 +238,30 @@ window.addEventListener('click', async (event) => {
 
 // Controls Listeners
 document.getElementById('speed-slider').addEventListener('input', (e) => {
-  TIME_SCALE = parseInt(e.target.value);
-  document.getElementById('speed-value').textContent = TIME_SCALE;
+  const timeScale = parseInt(e.target.value);
+  updateState({ timeScale });
+  document.getElementById('speed-value').textContent = timeScale;
 });
 
 document.getElementById('pause-btn').addEventListener('click', () => {
-  isPaused = !isPaused;
+  const isPaused = !state.isPaused;
+  updateState({ isPaused });
   document.getElementById('pause-icon').textContent = isPaused ? '▶' : '⏸';
   document.getElementById('pause-btn').classList.toggle('active', isPaused);
 });
 
 document.getElementById('reset-btn').addEventListener('click', () => {
-  currentTime = new Date();
+  updateState({ currentTime: new Date() });
 });
 
 document.getElementById('camera-selector').addEventListener('click', (e) => {
   const option = e.target.closest('.selector-option');
   if (!option) return;
 
-  document.querySelectorAll('.selector-option').forEach(el => el.classList.remove('active'));
+  document.querySelectorAll('#camera-selector .selector-option').forEach(el => el.classList.remove('active'));
   option.classList.add('active');
-  cameraMode = option.dataset.mode;
+  const cameraMode = option.dataset.mode;
+  updateState({ cameraMode });
 
   if (cameraMode === 'FREE') {
     tbControls.target.set(0, 0, 0);
@@ -418,24 +293,25 @@ document.getElementById('mesh-selector').addEventListener('click', (e) => {
 
   document.querySelectorAll('#mesh-selector .selector-option').forEach(el => el.classList.remove('active'));
   option.classList.add('active');
-  const meshType = option.dataset.mesh;
-  Globe.globeImageUrl(MESHES[meshType]);
+  const meshMode = option.dataset.mesh;
+  updateState({ meshMode });
+  Globe.globeImageUrl(MESHES[meshMode]);
 });
 
 // Track Single Listener
 document.getElementById('track-single-btn').addEventListener('click', () => {
-  cameraMode = 'FOLLOW';
+  updateState({ cameraMode: 'FOLLOW' });
   document.querySelectorAll('#camera-selector .selector-option').forEach(el => el.classList.remove('active'));
   document.querySelector('#camera-selector [data-mode="FOLLOW"]').classList.add('active');
 
   const selectedIndex = satelliteManager.getSelected();
   if (selectedIndex >= 0) {
-      const satPos = satelliteManager.getSelectedPosition();
-      if (satPos) {
-          const globalPos = satPos.clone();
-          globalPos.applyMatrix4(Globe.matrixWorld);
-          tbControls.target.copy(globalPos);
-      }
+    const satPos = satelliteManager.getSelectedPosition();
+    if (satPos) {
+      const globalPos = satPos.clone();
+      globalPos.applyMatrix4(Globe.matrixWorld);
+      tbControls.target.copy(globalPos);
+    }
   }
 });
 
@@ -447,13 +323,14 @@ document.getElementById('view-mode').addEventListener('click', (e) => {
   document.querySelectorAll('#view-mode .selector-option').forEach(el => el.classList.remove('active'));
   option.classList.add('active');
   const viewMode = option.dataset.view;
+  updateState({ viewMode });
 
   if (viewMode === 'earth') {
     // Earth View - center on Earth
     tbControls.target.set(0, 0, 0);
     const currentDist = camera.position.length();
     camera.position.set(0, 0, Math.max(currentDist, 400));
-    cameraMode = 'FREE';
+    updateState({ cameraMode: 'FREE' });
     document.querySelectorAll('#camera-selector .selector-option').forEach(el => el.classList.remove('active'));
     document.querySelector('#camera-selector [data-mode="FREE"]').classList.add('active');
   } else if (viewMode === 'satellite') {
@@ -470,7 +347,7 @@ document.getElementById('view-mode').addEventListener('click', (e) => {
         const offset = new THREE.Vector3(20, 20, 20);
         camera.position.copy(globalPos.clone().add(offset));
 
-        cameraMode = 'FOLLOW';
+        updateState({ cameraMode: 'FOLLOW' });
         document.querySelectorAll('#camera-selector .selector-option').forEach(el => el.classList.remove('active'));
         document.querySelector('#camera-selector [data-mode="FOLLOW"]').classList.add('active');
       }
@@ -520,47 +397,47 @@ async function selectSatellite(index) {
     const prevSelected = satelliteManager.getSelected();
 
     // Toggle orbit off if clicking the same selected satellite again
-    if (prevSelected === index && orbitVisible) {
-      orbitVisible = false;
+    if (prevSelected === index && state.orbitVisible) {
+      updateState({ orbitVisible: false });
       const orbitLine = Globe.getObjectByName('orbitLine');
       if (orbitLine) Globe.remove(orbitLine);
       return;
     }
 
     satelliteManager.setSelected(index);
-    orbitVisible = true;
-    
+    updateState({ orbitVisible: true });
+
     // Get satellite data
     const satData = satelliteManager.getSatelliteData(index);
     if (satData) {
       // Initial info update (will be updated live in loop)
-      updateSelectedSatelliteInfo(satData);
-      
+      updateInfoBox(infoBox, satData);
+
       // Calculate and draw orbit arc
       try {
-        const orbitPoints = await satelliteManager.calculateOrbitPath(satData, Globe, currentTime);
+        const orbitPoints = await satelliteManager.calculateOrbitPath(satData, Globe, state.currentTime);
         drawOrbitPath(orbitPoints, true);
       } catch (err) {
         console.error('Failed to calculate orbit:', err);
-        orbitVisible = false;
+        updateState({ orbitVisible: false });
       }
     }
-    
+
     // Focus camera on selected satellite
     setTimeout(() => {
       const satPos = satelliteManager.getSelectedPosition();
       if (satPos) {
         const globalPos = satPos.clone();
         globalPos.applyMatrix4(Globe.matrixWorld);
-        
+
         tbControls.target.copy(globalPos);
-        
+
         // Position camera relative to the satellite's position on the globe
         // Calculate normal vector from center of earth (0,0,0) to satellite
         const normal = globalPos.clone().normalize();
         const distance = 80; // Distance above the satellite
         const newCameraPos = globalPos.clone().add(normal.multiplyScalar(distance));
-        
+
         camera.position.copy(newCameraPos);
         camera.lookAt(globalPos);
       }

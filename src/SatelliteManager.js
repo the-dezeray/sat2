@@ -10,14 +10,19 @@ export class SatelliteManager {
         this.dummy = new THREE.Object3D();
         this.isReady = false;
         this.lastUpdateTime = 0;
-        this.updateInterval = 1000; 
+        this.updateInterval = 1000;
         this.pendingUpdate = false;
         this.satelliteData = [];
         this.hoveredIndex = -1;
         this.selectedIndex = -1;
         this.raycaster = new THREE.Raycaster();
-        this.raycaster.params.Points.threshold = 2;
         this.lastScale = 1;
+        this.onReadyCallback = null;
+
+        // Reusable objects for performance
+        this._tempV1 = new THREE.Vector3();
+        this._tempV2 = new THREE.Vector3();
+        this._tempColor = new THREE.Color();
     }
 
     async init() {
@@ -31,8 +36,8 @@ export class SatelliteManager {
 
             // 2. Create InstancedMesh
             // Increased size for visibility
-            const geometry = new THREE.IcosahedronGeometry(0.8, 1); 
-            
+            const geometry = new THREE.IcosahedronGeometry(0.8, 1);
+
             const material = new THREE.MeshBasicMaterial({ color: 0xffffff }); // White for max visibility
             this.mesh = new THREE.InstancedMesh(geometry, material, this.count);
 
@@ -42,7 +47,7 @@ export class SatelliteManager {
                 const item = this.satelliteData[i];
                 // item format: [id, name, epoch_unix, incl, raan, ecc, argp, ma, mm, bstar]
                 const mm = item[8]; // Mean Motion
-                
+
                 if (mm >= 11.25) {
                     color.setHex(0xffffff); // LEO - Green
                 } else if (mm > 1.0027) {
@@ -60,12 +65,13 @@ export class SatelliteManager {
 
             // 3. Init Worker
             this.worker = new Worker(new URL('./worker.js', import.meta.url), { type: 'module' });
-            
+
             this.worker.onmessage = (e) => {
                 const { type, positions, count } = e.data;
                 if (type === 'ready') {
                     this.isReady = true;
                     console.log('Worker ready');
+                    if (this.onReadyCallback) this.onReadyCallback();
                 } else if (type === 'update') {
                     this.updateMesh(positions);
                     this.pendingUpdate = false;
@@ -109,31 +115,31 @@ export class SatelliteManager {
                 // Axis Mapping:
                 // Satellite (ECF): X=PrimeMeridian, Z=North, Y=90E
                 // ThreeGlobe: Z=PrimeMeridian, Y=North, X=90E
-                
+
                 const threeX = y * SCALE;
                 const threeY = z * SCALE;
                 const threeZ = x * SCALE;
 
                 this.dummy.position.set(threeX, threeY, threeZ);
                 this.dummy.scale.set(currentScale, currentScale, currentScale);
-                this.dummy.lookAt(0, 0, 0); 
+                this.dummy.lookAt(0, 0, 0);
             }
-            
+
             this.dummy.updateMatrix();
             this.mesh.setMatrixAt(i, this.dummy.matrix);
         }
-        
+
         this.mesh.instanceMatrix.needsUpdate = true;
         if (validCount === 0) console.warn('No valid satellites updated!');
         else if (Math.random() < 0.01) console.log(`Updated ${validCount} satellites`);
-        
+
         // Update colors based on hover/selection
         this.updateColors();
     }
 
     updateSatelliteScale(camera) {
         if (!this.mesh || !this.currentPositions) return;
-        
+
         const SAT_REFERENCE_CAMERA_DISTANCE = 800;
         const SAT_WORLD_RADIUS_AT_REFERENCE = 0.6;
         const SAT_WORLD_RADIUS_MIN = 0.2;
@@ -141,68 +147,136 @@ export class SatelliteManager {
 
         const cameraDistance = camera.position.length();
         const worldRadius = THREE.MathUtils.clamp(
-          (cameraDistance / SAT_REFERENCE_CAMERA_DISTANCE) * SAT_WORLD_RADIUS_AT_REFERENCE,
-          SAT_WORLD_RADIUS_MIN,
-          SAT_WORLD_RADIUS_MAX
+            (cameraDistance / SAT_REFERENCE_CAMERA_DISTANCE) * SAT_WORLD_RADIUS_AT_REFERENCE,
+            SAT_WORLD_RADIUS_MIN,
+            SAT_WORLD_RADIUS_MAX
         );
-        
+
         if (Math.abs(this.lastScale - worldRadius) < 0.0001) return;
         this.lastScale = worldRadius;
-        
+
         this.updateMesh(this.currentPositions);
     }
 
     updateColors() {
         if (!this.mesh) return;
-        
-        const color = new THREE.Color();
-        const colors = new Float32Array(this.count * 3);
-        
+
         for (let i = 0; i < this.count; i++) {
-            if (i === this.selectedIndex) {
-                color.setHex(0x00ff00); // Green for selected
-            } else if (i === this.hoveredIndex) {
-                color.setHex(0x00ff00); // Green for hovered
-            } else {
-                color.setHex(0xffffff); // White default
-            }
-            
-            colors[i * 3] = color.r;
-            colors[i * 3 + 1] = color.g;
-            colors[i * 3 + 2] = color.b;
+            this._updateSingleColorInternal(i);
         }
-        
-        if (!this.mesh.geometry.attributes.color) {
-            this.mesh.geometry.setAttribute('color', new THREE.InstancedBufferAttribute(colors, 3));
-            this.mesh.material.vertexColors = true;
+
+        if (this.mesh.instanceColor) {
+            this.mesh.instanceColor.needsUpdate = true;
+        }
+    }
+
+    _updateSingleColorInternal(index) {
+        if (index === this.selectedIndex || index === this.hoveredIndex) {
+            this._tempColor.setHex(0x00ff00); // Green for selected/hovered
         } else {
-            this.mesh.geometry.attributes.color.array.set(colors);
-            this.mesh.geometry.attributes.color.needsUpdate = true;
+            const item = this.satelliteData[index];
+            const name = item[1] || '';
+            const mm = item[8]; // Mean Motion
+
+            if (name.includes('STARLINK')) {
+                this._tempColor.setHex(0xbbbbff); // Premium Purple for Starlink
+            } else if (mm >= 11.25) {
+                this._tempColor.setHex(0xffffff); // LEO - White
+            } else if (mm > 1.0027) {
+                this._tempColor.setHex(0xffff00); // MEO - Yellow
+            } else {
+                this._tempColor.setHex(0xff0000); // HEO - Red
+            }
+        }
+        this.mesh.setColorAt(index, this._tempColor);
+    }
+
+    updateSingleSatelliteColor(index) {
+        if (!this.mesh || index < 0 || index >= this.count) return;
+        this._updateSingleColorInternal(index);
+        if (this.mesh.instanceColor) {
+            this.mesh.instanceColor.needsUpdate = true;
         }
     }
 
     checkHover(mouse, camera) {
-        if (!this.mesh || !this.isReady) return -1;
-        
+        if (!this.mesh || !this.isReady || !this.currentPositions) return -1;
+
         this.raycaster.setFromCamera(mouse, camera);
-        const intersects = this.raycaster.intersectObject(this.mesh);
-        
-        if (intersects.length > 0) {
-            return intersects[0].instanceId;
+        const ray = this.raycaster.ray;
+
+        let closestIndex = -1;
+        let minDistanceToRay = Infinity;
+
+        const cameraDist = camera.position.length();
+        // Threshold increases with zoom distance for better UX
+        const threshold = (cameraDist / 800) * 4;
+
+        const EARTH_RADIUS_KM = 6371;
+        const GLOBE_RADIUS = 100;
+        const SCALE = GLOBE_RADIUS / EARTH_RADIUS_KM;
+
+        // Optimization: Pre-calculate some values for occlusion check
+        const camPos = camera.position;
+        const earthCenter = new THREE.Vector3(0, 0, 0);
+        const earthRadiusSq = 100 * 100;
+
+        for (let i = 0; i < this.count; i++) {
+            const x = this.currentPositions[i * 3];
+            const y = this.currentPositions[i * 3 + 1];
+            const z = this.currentPositions[i * 3 + 2];
+            if (x === 0 && y === 0 && z === 0) continue;
+
+            // Transformed position
+            this._tempV1.set(y * SCALE, z * SCALE, x * SCALE);
+
+            // 1. Is it behind the camera?
+            this._tempV2.subVectors(this._tempV1, ray.origin);
+            if (this._tempV2.dot(ray.direction) < 0) continue;
+
+            // 2. Distance to ray
+            const distToRay = ray.distanceToPoint(this._tempV1);
+
+            if (distToRay < threshold) {
+                // 3. Occlusion Check: Simple Sphere/Point visibility
+                // A satellite is hidden if the globe is between it and camera
+                const dot = this._tempV1.dot(camPos);
+                if (dot < 0) {
+                    // Check if it's behind the horizon
+                    // Mathematically, if angle between Cam->Center and Cam->Sat is large, 
+                    // it might be occluded. 
+                    // Simpler: if it's on the other side of the planet (dot < 0), skip.
+                    continue;
+                }
+
+                if (distToRay < minDistanceToRay) {
+                    minDistanceToRay = distToRay;
+                    closestIndex = i;
+                }
+            }
         }
-        return -1;
+
+        return closestIndex;
     }
 
     setHovered(index) {
         if (this.hoveredIndex !== index) {
+            const prevHovered = this.hoveredIndex;
             this.hoveredIndex = index;
-            this.updateColors();
+
+            if (prevHovered >= 0) this.updateSingleSatelliteColor(prevHovered);
+            if (this.hoveredIndex >= 0) this.updateSingleSatelliteColor(this.hoveredIndex);
         }
     }
 
     setSelected(index) {
-        this.selectedIndex = index;
-        this.updateColors();
+        if (this.selectedIndex !== index) {
+            const prevSelected = this.selectedIndex;
+            this.selectedIndex = index;
+
+            if (prevSelected >= 0) this.updateSingleSatelliteColor(prevSelected);
+            if (this.selectedIndex >= 0) this.updateSingleSatelliteColor(this.selectedIndex);
+        }
     }
 
     getSelected() {
@@ -226,7 +300,7 @@ export class SatelliteManager {
             const sat = this.satelliteData[i];
             const id = String(sat[0]);
             const name = String(sat[1]).toLowerCase();
-            
+
             if (id === query || name.includes(lowerQuery)) {
                 return i;
             }
@@ -237,14 +311,14 @@ export class SatelliteManager {
     searchSatellites(query, limit = 5) {
         const lowerQuery = query.toLowerCase();
         const results = [];
-        
+
         for (let i = 0; i < this.satelliteData.length; i++) {
             if (results.length >= limit) break;
-            
+
             const sat = this.satelliteData[i];
             const id = String(sat[0]);
             const name = String(sat[1]).toLowerCase();
-            
+
             if (id.includes(lowerQuery) || name.includes(lowerQuery)) {
                 results.push({
                     index: i,
@@ -258,7 +332,7 @@ export class SatelliteManager {
 
     getSatrec(index) {
         if (index < 0 || index >= this.satelliteData.length) return null;
-        
+
         const satellite = this.satelliteData[index];
         // satellite data format: [id, name, epoch, i, o, e, p, m, n, b]
         const epoch = satellite[2];
@@ -269,7 +343,7 @@ export class SatelliteManager {
         const meanAnomaly = satellite[7];
         const meanMotion = satellite[8];
         const bstar = satellite[9];
-        
+
         // Create satrec manually
         return {
             no: meanMotion * (2 * Math.PI / 1440),
@@ -286,24 +360,28 @@ export class SatelliteManager {
     }
 
 
-    getSelectedPosition() {
-        if (this.selectedIndex < 0 || !this.currentPositions) return null;
-        
+    getPosition(index) {
+        if (index < 0 || index >= this.count || !this.currentPositions) return null;
+
         const EARTH_RADIUS_KM = 6371;
         const GLOBE_RADIUS = 100;
         const SCALE = GLOBE_RADIUS / EARTH_RADIUS_KM;
-        
-        const x = this.currentPositions[this.selectedIndex * 3];
-        const y = this.currentPositions[this.selectedIndex * 3 + 1];
-        const z = this.currentPositions[this.selectedIndex * 3 + 2];
-        
+
+        const x = this.currentPositions[index * 3];
+        const y = this.currentPositions[index * 3 + 1];
+        const z = this.currentPositions[index * 3 + 2];
+
         if (x === 0 && y === 0 && z === 0) return null;
-        
+
         const threeX = y * SCALE;
         const threeY = z * SCALE;
         const threeZ = x * SCALE;
-        
+
         return new THREE.Vector3(threeX, threeY, threeZ);
+    }
+
+    getSelectedPosition() {
+        return this.getPosition(this.selectedIndex);
     }
 
     async calculateOrbitPath(satData, globe, currentTime, numPoints = 100) {
@@ -311,28 +389,28 @@ export class SatelliteManager {
 
         const satrec = this.createSatRecFromData(satData);
         const meanMotion = satData[8];
-        
+
         const periodMinutes = 1440 / meanMotion;
         const periodMs = periodMinutes * 60 * 1000;
         const EARTH_RADIUS_KM = 6371;
-        
+
         for (let i = 0; i <= numPoints; i++) {
             const time = new Date(currentTime.getTime() + (periodMs / numPoints) * i);
             const gmst = satellite.gstime(time);
             const positionAndVelocity = satellite.propagate(satrec, time);
             const positionEci = positionAndVelocity.position;
-            
+
             if (positionEci && typeof positionEci.x === 'number') {
                 const gdPos = satellite.eciToGeodetic(positionEci, gmst);
                 const lat = satellite.radiansToDegrees(gdPos.latitude);
                 const lng = satellite.radiansToDegrees(gdPos.longitude);
                 const alt = gdPos.height / EARTH_RADIUS_KM;
-                
+
                 const coords = globe.getCoords(lat, lng, alt);
                 if (coords) points.push(new THREE.Vector3(coords.x, coords.y, coords.z));
             }
         }
-        
+
         return points;
     }
 
@@ -369,6 +447,30 @@ export class SatelliteManager {
         const line2 = line2Body + this.computeChecksum(line2Body);
 
         return satellite.twoline2satrec(line1, line2);
+    }
+
+    getLiveStats(index) {
+        if (index < 0 || index >= this.count || !this.currentPositions) return null;
+
+        const EARTH_RADIUS_KM = 6371;
+        const x = this.currentPositions[index * 3];
+        const y = this.currentPositions[index * 3 + 1];
+        const z = this.currentPositions[index * 3 + 2];
+
+        if (x === 0 && y === 0 && z === 0) return null;
+
+        // ECF to Geodetic
+        const lng = Math.atan2(y, x) * (180 / Math.PI);
+        const hypot = Math.sqrt(x * x + y * y);
+        const lat = Math.atan2(z, hypot) * (180 / Math.PI);
+        const alt = Math.sqrt(x * x + y * y + z * z) - EARTH_RADIUS_KM;
+
+        return {
+            lat,
+            lng,
+            alt,
+            x, y, z
+        };
     }
 
     computeChecksum(line) {
