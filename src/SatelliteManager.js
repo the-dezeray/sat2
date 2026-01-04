@@ -25,14 +25,24 @@ export class SatelliteManager {
         this._tempColor = new THREE.Color();
     }
 
+    updateLoadingProgress(percentage, text) {
+        const percentageEl = document.querySelector('.loading-percentage');
+        const textEl = document.querySelector('.loading-text');
+        if (percentageEl) percentageEl.textContent = `${percentage}%`;
+        if (textEl && text) textEl.textContent = text;
+    }
+
     async init() {
         // 1. Load Data
         try {
+            this.updateLoadingProgress(10, 'Fetching satellite data...');
             const response = await fetch('./minified.json');
+            this.updateLoadingProgress(30, 'Parsing satellite database...');
             const data = await response.json();
             this.satelliteData = data;
             this.count = data.length;
             console.log(`Loaded ${this.count} satellites.`);
+            this.updateLoadingProgress(50, 'Creating 3D instances...');
 
             // 2. Create InstancedMesh
             // Increased size for visibility
@@ -62,6 +72,7 @@ export class SatelliteManager {
             this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
             this.mesh.frustumCulled = false; // Prevent culling issues
             this.globe.add(this.mesh);
+            this.updateLoadingProgress(70, 'Initializing worker thread...');
 
             // 3. Init Worker
             this.worker = new Worker(new URL('./worker.js', import.meta.url), { type: 'module' });
@@ -71,6 +82,7 @@ export class SatelliteManager {
                 if (type === 'ready') {
                     this.isReady = true;
                     console.log('Worker ready');
+                    this.updateLoadingProgress(100, 'Ready!');
                     if (this.onReadyCallback) this.onReadyCallback();
                 } else if (type === 'update') {
                     this.updateMesh(positions);
