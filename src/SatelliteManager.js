@@ -28,7 +28,7 @@ export class SatelliteManager {
     async init() {
         // 1. Load Data
         try {
-            const response = await fetch('/minified.json');
+            const response = await fetch('./minified.json');
             const data = await response.json();
             this.satelliteData = data;
             this.count = data.length;
