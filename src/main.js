@@ -29,6 +29,34 @@ const Globe = new ThreeGlobe()
 const satelliteManager = new SatelliteManager(Globe);
 satelliteManager.init();
 
+function handleUrlParams() {
+  const params = new URLSearchParams(window.location.search);
+  // Support ?select=name or ?s=name or ?name (if it's the only param)
+  let query = params.get('select') || params.get('s');
+  
+  if (!query) {
+    // Check if there's a param with no value, e.g. ?botsat-1
+    for (const [key, value] of params.entries()) {
+      if (value === '' && key !== '') {
+        query = key;
+        break;
+      }
+    }
+  }
+
+  // Handle the specific case /select?=botsat-1
+  if (!query && window.location.search.startsWith('?=')) {
+    query = window.location.search.substring(2);
+  }
+
+  if (query) {
+    const index = satelliteManager.searchSatellite(query);
+    if (index >= 0) {
+      selectSatellite(index);
+    }
+  }
+}
+
 // Hide loading overlay when ready
 satelliteManager.onReadyCallback = () => {
   const overlay = document.getElementById('loading-overlay');
@@ -36,7 +64,13 @@ satelliteManager.onReadyCallback = () => {
     overlay.classList.add('hidden');
     setTimeout(() => overlay.remove(), 500);
   }
+  handleUrlParams();
 };
+
+// Handle browser back/forward buttons
+window.addEventListener('popstate', () => {
+  handleUrlParams();
+});
 
 // Scene Setup
 const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -71,10 +105,12 @@ function drawOrbitPath(points, isSelected = false) {
     color: isSelected ? 0x00ff00 : 0x38bdf8,
     linewidth: 2,
     transparent: true,
-    opacity: isSelected ? 0.8 : 0.4
+    opacity: 0 // Start invisible for animation
   });
   const line = new THREE.Line(geometry, material);
   line.name = 'orbitLine';
+  line.userData.targetOpacity = isSelected ? 0.8 : 0.4;
+  line.userData.currentOpacity = 0;
   Globe.add(line);
 }
 
@@ -110,6 +146,49 @@ function drawDownwardLine(satPos) {
 
   satelliteManager.update(state.currentTime);
   satelliteManager.updateSatelliteScale(camera);
+
+  // Handle camera animation
+  if (state.cameraAnimation.active) {
+    state.cameraAnimation.progress += 1 / (60 * state.cameraAnimation.duration);
+    
+    if (state.cameraAnimation.progress >= 1) {
+      // Animation complete
+      state.cameraAnimation.active = false;
+      state.cameraAnimation.progress = 1;
+    }
+    
+    // Easing function (easeInOutCubic)
+    const t = state.cameraAnimation.progress;
+    const eased = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+    
+    // Interpolate camera position and target
+    camera.position.lerpVectors(
+      state.cameraAnimation.startPos,
+      state.cameraAnimation.endPos,
+      eased
+    );
+    
+    tbControls.target.lerpVectors(
+      state.cameraAnimation.startTarget,
+      state.cameraAnimation.endTarget,
+      eased
+    );
+  }
+
+  // Animate orbit line opacity
+  const orbitLine = Globe.getObjectByName('orbitLine');
+  if (orbitLine && orbitLine.material) {
+    const targetOpacity = orbitLine.userData.targetOpacity || 0.4;
+    orbitLine.userData.currentOpacity = orbitLine.userData.currentOpacity || 0;
+    
+    if (orbitLine.userData.currentOpacity < targetOpacity) {
+      orbitLine.userData.currentOpacity = Math.min(
+        orbitLine.userData.currentOpacity + 0.02,
+        targetOpacity
+      );
+      orbitLine.material.opacity = orbitLine.userData.currentOpacity;
+    }
+  }
 
   // Update selected satellite telemetry and draw downward line
   const selectedIndex = satelliteManager.getSelected();
@@ -401,6 +480,9 @@ async function selectSatellite(index) {
       updateState({ orbitVisible: false });
       const orbitLine = Globe.getObjectByName('orbitLine');
       if (orbitLine) Globe.remove(orbitLine);
+      
+      // Clear URL parameter
+      window.history.replaceState({}, '', window.location.pathname);
       return;
     }
 
@@ -410,6 +492,11 @@ async function selectSatellite(index) {
     // Get satellite data
     const satData = satelliteManager.getSatelliteData(index);
     if (satData) {
+      // Update URL parameter
+      const name = satData[1];
+      const newUrl = `${window.location.pathname}?select=${encodeURIComponent(name)}`;
+      window.history.replaceState({ path: newUrl }, '', newUrl);
+
       // Initial info update (will be updated live in loop)
       updateInfoBox(infoBox, satData);
 
@@ -423,23 +510,33 @@ async function selectSatellite(index) {
       }
     }
 
-    // Focus camera on selected satellite
+    // Animate camera to selected satellite
     setTimeout(() => {
       const satPos = satelliteManager.getSelectedPosition();
       if (satPos) {
         const globalPos = satPos.clone();
         globalPos.applyMatrix4(Globe.matrixWorld);
 
-        tbControls.target.copy(globalPos);
-
-        // Position camera relative to the satellite's position on the globe
-        // Calculate normal vector from center of earth (0,0,0) to satellite
+        // Calculate target camera position at an angle (not directly above)
         const normal = globalPos.clone().normalize();
-        const distance = 80; // Distance above the satellite
-        const newCameraPos = globalPos.clone().add(normal.multiplyScalar(distance));
+        const distance = 80;
+        
+        // Create offset: move outward along normal, then add tangential offset for angled view
+        const tangent = new THREE.Vector3(-normal.y, normal.x, 0).normalize();
+        const newCameraPos = globalPos.clone()
+          .add(normal.multiplyScalar(distance * 0.6)) // Reduced outward distance
+          .add(tangent.multiplyScalar(distance * 0.5)); // Add side offset
 
-        camera.position.copy(newCameraPos);
-        camera.lookAt(globalPos);
+        // Start camera animation
+        state.cameraAnimation = {
+          active: true,
+          startPos: camera.position.clone(),
+          endPos: newCameraPos,
+          startTarget: tbControls.target.clone(),
+          endTarget: globalPos.clone(),
+          progress: 0,
+          duration: 1.2
+        };
       }
     }, 100);
   }

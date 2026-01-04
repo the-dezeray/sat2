@@ -7,7 +7,17 @@ export const state = {
   selectedSatelliteIndex: -1,
   lastInfoUpdate: 0,
   viewMode: 'earth', // earth, satellite
-  meshMode: 'marble' // marble, night, dark, gray
+  meshMode: 'marble', // marble, night, dark, gray
+  // Camera animation state
+  cameraAnimation: {
+    active: false,
+    startPos: null,
+    endPos: null,
+    startTarget: null,
+    endTarget: null,
+    progress: 0,
+    duration: 1.2 // seconds
+  }
 };
 
 export function updateState(updates) {

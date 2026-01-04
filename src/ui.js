@@ -104,6 +104,15 @@ export function createUI(handlers) {
   `;
   document.body.appendChild(controlsPanel);
 
+  // About Link - Top Left
+  const aboutText = document.createElement('a');
+  aboutText.id = 'about-text';
+  aboutText.href = 'https://www.dezeray.me';
+  aboutText.target = '_blank';
+  aboutText.rel = 'noopener noreferrer';
+  aboutText.textContent = 'about me';
+  document.body.appendChild(aboutText);
+
   return {
     timeLogger,
     searchContainer,
