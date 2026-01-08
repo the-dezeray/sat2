@@ -6,7 +6,7 @@
 
 <p align="center">
   <strong>Mini Orbital Ephemeris Index</strong><br>
-  A high-performance, real-time satellite tracking visualization powered by Three.js.
+  My implementation of real-time satellite tracking and visualization.
 </p>
 
 <p align="center">
@@ -20,37 +20,46 @@
 
 ---
 
-## 🛰️ Overview
+## 🛰️ About The Project
 
-**MOPHI** is a sophisticated satellite tracking application that visualizes thousands of satellites orbiting Earth in real-time. By leveraging the power of WebGL and Web Workers, it provides a smooth, interactive experience for exploring the complex network of objects in terrestrial orbit.
+MOPHI is a personal implementation of a satellite tracking system built to visualize the thousands of objects currently in terrestrial orbit, using real-time data to create a dynamic map of our orbital environment.
 
-## ✨ Features
+The goal was to create a tool that is both high-performing and visually intuitive, allowing anyone to explore the complex network of satellites above us.
 
-- **Real-time Tracking**: Dynamic propagation of orbital data for over 20,000+ satellites using `satellite.js`.
-- **High-Performance Rendering**: Optimized 3D visualization using `InstancedMesh`, capable of handling high object counts with 60FPS performance.
-- **Multithreaded Calculations**: Offloads intensive orbital mathematics to Web Workers to ensure a stutter-free main thread.
-- **Color-Coded Orbits**: Visual classification by orbital period:
+## ✨ Implementation Details
+
+- **Real-time Engine**: `satellite.js` to process orbital data for over 20,000+ objects simultaneously, ensuring every position is calculated live.
+- **High-Performance Rendering**:  `InstancedMesh` and WebGL optimizations to maintain a smooth 60FPS experience, even with high object counts.
+- **Multithreaded Processing**: To keep the UI responsive, I opted  offloaded heavy orbital mathematics to Web Workers, preventing main-thread stutters.
+- **Visual Classification**: categorized satellites by orbital period for better clarity:
   - ⚪ **LEO** (Low Earth Orbit): White
   - 🟡 **MEO** (Medium Earth Orbit): Yellow
   - 🔴 **HEO** (High Earth Orbit): Red
-  - 🟢 **STARLINK**: Emerald green
-- **Interactive UI**: Search, select, and inspect individual satellites for live telemetry including altitude, latitude, and longitude.
-- **Dynamic Orbit Paths**: Real-time calculation and rendering of future orbital trajectories.
+  - 🟢 **STARLINK**: Emerald Green
+- **Interactive Telemetry**: There is a built  search and selection system that provides live telemetry—including altitude, latitude, and longitude—along with projected orbit paths.
 
-## 🛠️ Tech Stack
+## � Data Optimization
+
+Handling over 20,000 satellites requires efficient data management. I developed a custom Python-based **Data Compression Tool** to prepare the orbital data for the web:
+
+- **Array Mapping**: Instead of large JSON objects, each satellite is mapped to a lightweight array format, eliminating thousands of redundant key strings.
+- **Precision Balancing**: The decimal precision of orbital parameters is optimized—balancing visual accuracy with a significant reduction in character count.
+- **Epoch Conversion**: ISO 8601 timestamps are converted into Unix integers to save space and simplify time-based calculations on the client side.
+- **Payload Reduction**: These optimizations reduced the raw telemetry data from **8.6MB down to 3MB** (a ~65% reduction), ensuring fast initial load times and lower memory overhead.
+
+## �🛠️ Tech Stack
 
 - **Core**: JavaScript (ES6+)
 - **Visualization**: [Three.js](https://threejs.org/) & [Three-Globe](https://github.com/vasturiano/three-globe)
 - **Physics/Math**: [satellite.js](https://github.com/shashwatak/satellite-js)
 - **Build Tool**: [Vite](https://vitejs.dev/)
-- **UI Architecture**: Component-based vanilla JS with CSS Grid/Flexbox
 
 ## 🚀 Getting Started
 
 ### Prerequisites
 
-- [Node.js](https://nodejs.org/) (Latest LTS recommended)
-- [npm](https://www.npmjs.com/) or [pnpm](https://pnpm.io/)
+- [Node.js](https://nodejs.org/) (Latest LTS)
+- [npm](https://www.npmjs.com/)
 
 ### Installation
 
@@ -65,29 +74,20 @@
    npm install
    ```
 
-3. Start the development server:
+3. Start the dev server:
    ```bash
    npm run dev
    ```
 
-4. Build for production:
-   ```bash
-   npm run build
-   ```
-
 ## 📖 Usage
 
-- **Navigation**: Use mouse/touch to rotate, zoom, and pan around the globe.
-- **Search**: Use the search bar in the UI to find specific satellites by name or NORAD ID.
-- **Details**: Click on a satellite point to lock focus and view live telemetry data.
-- **Tracking**: Enable "Tracking Mode" to automatically follow a selected satellite's path.
-
-## 📄 License
-
-This project is licensed under the MIT License - see the [LICENSE](https://github.com/kefranabg/readme-md-generator/blob/master/LICENSE) link for details.
+- **Navigation**: Rotate the globe with your mouse and use the scroll wheel to zoom.
+- **Search**: Find specific satellites by name or NORAD ID using the search bar.
+- **Details**: Click a satellite to view live telemetry and its predicted orbit path.
+- **Tracking**: Enable "Tracking Mode" to keep the camera focused on a selected satellite.
 
 ---
 
 <p align="center">
-  Built with ❤️ for the aerospace community.
+  Built for the curiosity of what lies above. 🛰️
 </p>
