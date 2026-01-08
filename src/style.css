@@ -128,9 +128,9 @@ body.hovering-satellite {
   background: #ffffff;
   color: #030712;
   border: none;
-  padding: 5px 8px;
+  padding: 5px 12px;
   border-radius: var(--radius-full);
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 600;
   cursor: pointer;
   display: flex;
