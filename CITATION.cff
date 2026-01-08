@@ -1,0 +1,9 @@
+cff-version: 1.2.0
+title: "MOPHI – Mini Orbital Ephemeris Index"
+message: "If you use this software in academic work, please cite it as below."
+authors:
+  - family-names: Chingwaru
+    given-names: Desiree
+version: 1.0.0
+date-released: 2026-01-08
+url: https://github.com/the-dezeray/sat2
